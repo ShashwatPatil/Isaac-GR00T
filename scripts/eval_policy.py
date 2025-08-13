@@ -94,6 +94,12 @@ def main(args: ArgsConfig):
         args.action_horizon = len(data_config.action_indices)
         print(f"Using action_horizon={args.action_horizon} from data config '{args.data_config}'")
 
+    # Create save_plot_path directory if it doesn't exist
+    if args.save_plot_path is not None:
+        import os
+        os.makedirs(args.save_plot_path, exist_ok=True)
+        print(f"Created/verified directory: {args.save_plot_path}")
+
     if args.model_path is not None:
         import torch
 
@@ -156,6 +162,13 @@ def main(args: ArgsConfig):
     all_mse = []
     for traj_id in range(num_trajs):
         print(f"Running trajectory: {traj_id}/{num_trajs}")
+        
+        # Create trajectory-specific save path
+        if args.save_plot_path is not None:
+            traj_save_path = os.path.join(args.save_plot_path, f"trajectory_{traj_id}.png")
+        else:
+            traj_save_path = None
+            
         mse = calc_mse_for_single_trajectory(
             policy,
             dataset,
@@ -164,10 +177,11 @@ def main(args: ArgsConfig):
             steps=args.steps,
             action_horizon=args.action_horizon,
             plot=args.plot,
-            save_plot_path=args.save_plot_path,
+            save_plot_path=traj_save_path,
         )
         print("MSE:", mse)
         all_mse.append(mse)
+    
     print("Average MSE across all trajs:", np.mean(all_mse))
     print("Done")
     exit()
