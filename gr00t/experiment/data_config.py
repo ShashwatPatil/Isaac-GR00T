@@ -231,6 +231,22 @@ class So100DualCamDataConfig(So100DataConfig):
 
 
 ###########################################################################################
+###########################################################################################
+
+class So101DualCamDataConfig(So100DataConfig):
+    video_keys = ["video.front", "video.laptop"]
+    state_keys = ["state.single_arm", "state.gripper"]
+    action_keys = ["action.single_arm", "action.gripper"]
+    language_keys = ["annotation.human.task_description"]
+    observation_indices = [0]
+    action_indics = list(range(16))
+
+# made for so101 with cameras front and laptop
+
+
+###########################################################################################
+
+
 
 
 class UnitreeG1DataConfig(BaseDataConfig):
@@ -892,4 +908,5 @@ DATA_CONFIG_MAP = {
     "unitree_g1_full_body": UnitreeG1FullBodyDataConfig(),
     "oxe_droid": OxeDroidDataConfig(),
     "agibot_genie1": AgibotGenie1DataConfig(),
+    "so101_dualcam": So101DualCamDataConfig(),
 }
