@@ -61,8 +61,8 @@ class ArgsConfig:
     steps: int = 150
     """Number of steps to evaluate."""
 
-    trajs: int = 1
-    """Number of trajectories to evaluate."""
+    trajs: int = None
+    """Number of trajectories to evaluate. If None, will evaluate all trajectories in the dataset."""
 
     action_horizon: int = None
     """Action horizon to evaluate. If None, will use the data config's action horizon."""
@@ -142,11 +142,20 @@ def main(args: ArgsConfig):
 
     print("Total trajectories:", len(dataset.trajectory_lengths))
     print("All trajectories:", dataset.trajectory_lengths)
+    
+    # If trajs is None, evaluate all trajectories in the dataset
+    if args.trajs is None:
+        num_trajs = len(dataset.trajectory_lengths)
+        print(f"Evaluating all {num_trajs} trajectories in the dataset")
+    else:
+        num_trajs = min(args.trajs, len(dataset.trajectory_lengths))
+        print(f"Evaluating {num_trajs} trajectories")
+    
     print("Running on all trajs with modality keys:", args.modality_keys)
 
     all_mse = []
-    for traj_id in range(args.trajs):
-        print("Running trajectory:", traj_id)
+    for traj_id in range(num_trajs):
+        print(f"Running trajectory: {traj_id}/{num_trajs}")
         mse = calc_mse_for_single_trajectory(
             policy,
             dataset,
