@@ -363,21 +363,34 @@ def main(args: ArgsConfig):
     
     # Save summary data
     if save_data_path is not None:
+        # Helper function to convert numpy types to JSON serializable types
+        def convert_summary_to_json_serializable(obj):
+            if isinstance(obj, np.ndarray):
+                return obj.tolist()
+            elif isinstance(obj, (np.integer, np.floating, np.bool_)):
+                return obj.item()
+            elif isinstance(obj, dict):
+                return {key: convert_summary_to_json_serializable(val) for key, val in obj.items()}
+            elif isinstance(obj, (list, tuple)):
+                return [convert_summary_to_json_serializable(item) for item in obj]
+            else:
+                return obj
+
         summary_data = {
             "evaluation_summary": {
-                "total_trajectories": num_trajs,
-                "average_mse": np.mean(all_mse),
-                "mse_std": np.std(all_mse),
-                "total_evaluation_time": sum([t["inference_time"] for t in all_trajectory_data]),
+                "total_trajectories": int(num_trajs),
+                "average_mse": float(np.mean(all_mse)),
+                "mse_std": float(np.std(all_mse)),
+                "total_evaluation_time": float(sum([t["inference_time"] for t in all_trajectory_data])),
                 "configuration": {
                     "data_config": args.data_config,
-                    "action_horizon": args.action_horizon,
+                    "action_horizon": int(args.action_horizon),
                     "modality_keys": args.modality_keys,
                     "embodiment_tag": args.embodiment_tag,
-                    "denoising_steps": args.denoising_steps,
+                    "denoising_steps": int(args.denoising_steps),
                 }
             },
-            "trajectory_summaries": all_trajectory_data,
+            "trajectory_summaries": convert_summary_to_json_serializable(all_trajectory_data),
         }
         
         summary_path = save_data_path / "evaluation_summary.json"
