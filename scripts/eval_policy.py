@@ -13,6 +13,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
+import pathlib
+import pickle
 import warnings
 from dataclasses import dataclass, field
 from typing import List, Literal
@@ -58,8 +61,8 @@ class ArgsConfig:
     data_config: Literal[tuple(DATA_CONFIG_MAP.keys())] = "fourier_gr1_arms_only"
     """Data config to use."""
 
-    steps: int = 150
-    """Number of steps to evaluate."""
+    steps: int = None
+    """Number of steps to evaluate. If None, will evaluate all steps in each trajectory."""
 
     trajs: int = None
     """Number of trajectories to evaluate. If None, will evaluate all trajectories in the dataset."""
@@ -85,6 +88,101 @@ class ArgsConfig:
     save_plot_path: str = None
     """Path to save the plot."""
 
+    save_data_path: str = None
+    """Path to save trajectory inference data (JSON, pickle, NPZ files)."""
+
+
+def save_trajectory_data(
+    pred_actions: np.ndarray,
+    gt_actions: np.ndarray,
+    prediction_points: list,
+    metrics: dict,
+    traj_id: int,
+    save_path: pathlib.Path,
+    inference_times: list = None,
+    detailed_inference_data: list = None,
+):
+    """Save detailed trajectory data for offline analysis."""
+
+    # Create trajectory-specific directory
+    traj_dir = save_path / f"trajectory_{traj_id}"
+    traj_dir.mkdir(parents=True, exist_ok=True)
+
+    # Convert numpy arrays in metrics to lists for JSON serialization
+    metrics_json_safe = {}
+    for key, value in metrics.items():
+        if isinstance(value, np.ndarray):
+            metrics_json_safe[key] = value.tolist()
+        elif isinstance(value, (np.integer, np.floating)):
+            metrics_json_safe[key] = value.item()
+        else:
+            metrics_json_safe[key] = value
+
+    # Prepare data for export
+    trajectory_data = {
+        "trajectory_id": traj_id,
+        "metadata": {
+            "trajectory_length": metrics.get("trajectory_length", len(gt_actions)),
+            "steps_evaluated": metrics.get("steps_evaluated", len(pred_actions)),
+            "completion_rate": metrics.get("trajectory_completion", 1.0),
+            "prediction_points_count": len(prediction_points),
+        },
+        "metrics": metrics_json_safe,
+        "arrays": {
+            "predicted_actions": pred_actions.tolist(),
+            "ground_truth_actions": gt_actions.tolist(),
+        },
+        "prediction_points": [
+            {"step": int(step), "horizon_prediction": horizon.tolist() if hasattr(horizon, "tolist") else horizon}
+            for step, horizon in prediction_points
+        ],
+        "timing": inference_times if inference_times else [],
+        "detailed_inference_data": detailed_inference_data if detailed_inference_data else [],
+    }
+
+    # Save as JSON (human-readable)
+    json_path = traj_dir / "data.json"
+    with open(json_path, "w") as f:
+        json.dump(trajectory_data, f, indent=2)
+
+    # Save as pickle (preserves numpy arrays exactly)
+    pickle_path = traj_dir / "data.pkl"
+    with open(pickle_path, "wb") as f:
+        pickle.dump(
+            {
+                "pred_actions": pred_actions,
+                "gt_actions": gt_actions,
+                "prediction_points": prediction_points,
+                "metrics": metrics,  # Keep original metrics with numpy arrays
+                "inference_times": inference_times,
+                "detailed_inference_data": detailed_inference_data,
+            },
+            f,
+        )
+
+    # Save individual arrays as NPZ
+    npz_path = traj_dir / "arrays.npz"
+    np.savez(
+        npz_path,
+        predicted_actions=pred_actions,
+        ground_truth_actions=gt_actions,
+        **{f"horizon_{i}": horizon for i, (step, horizon) in enumerate(prediction_points)},
+    )
+
+    print(f"  Saved trajectory data to: {traj_dir}")
+    return traj_dir
+
+# You'll need to modify calc_mse_for_single_trajectory to return the data
+def calc_mse_for_single_trajectory_with_data(
+    policy, dataset, traj_id, modality_keys, steps, action_horizon, plot=False, save_plot_path=None
+):
+    """Modified version that returns prediction data along with MSE."""
+    
+    # Call the original function with return_data=True to get the additional data
+    return calc_mse_for_single_trajectory(
+        policy, dataset, traj_id, modality_keys, steps, action_horizon, plot, save_plot_path, return_data=True
+    )
+
 
 def main(args: ArgsConfig):
     data_config = DATA_CONFIG_MAP[args.data_config]
@@ -99,6 +197,14 @@ def main(args: ArgsConfig):
         import os
         os.makedirs(args.save_plot_path, exist_ok=True)
         print(f"Created/verified directory: {args.save_plot_path}")
+
+    # Create save_data_path directory if it doesn't exist
+    if args.save_data_path is not None:
+        save_data_path = pathlib.Path(args.save_data_path)
+        save_data_path.mkdir(parents=True, exist_ok=True)
+        print(f"Created/verified data directory: {save_data_path}")
+    else:
+        save_data_path = None
 
     if args.model_path is not None:
         import torch
@@ -160,27 +266,105 @@ def main(args: ArgsConfig):
     print("Running on all trajs with modality keys:", args.modality_keys)
 
     all_mse = []
+    all_trajectory_data = []  # Store data for summary
+    
     for traj_id in range(num_trajs):
-        print(f"Running trajectory: {traj_id}/{num_trajs}")
+        # Get the length of current trajectory
+        traj_length = dataset.trajectory_lengths[traj_id]
+        
+        # Use trajectory length if steps is None, otherwise use specified steps
+        if args.steps is None:
+            steps_to_eval = traj_length
+            print(f"Running trajectory {traj_id}/{num_trajs}: evaluating all {steps_to_eval} steps")
+        else:
+            steps_to_eval = min(args.steps, traj_length)
+            print(f"Running trajectory {traj_id}/{num_trajs}: evaluating {steps_to_eval}/{traj_length} steps")
         
         # Create trajectory-specific save path
         if args.save_plot_path is not None:
             traj_save_path = os.path.join(args.save_plot_path, f"trajectory_{traj_id}.png")
         else:
             traj_save_path = None
-            
-        mse = calc_mse_for_single_trajectory(
+        
+        import time
+        start_time = time.time()
+        
+        # Call the modified calc_mse_for_single_trajectory that returns additional data
+        result = calc_mse_for_single_trajectory_with_data(
             policy,
             dataset,
             traj_id,
             modality_keys=args.modality_keys,
-            steps=args.steps,
+            steps=steps_to_eval,
             action_horizon=args.action_horizon,
             plot=args.plot,
             save_plot_path=traj_save_path,
         )
-        print("MSE:", mse)
+        
+        end_time = time.time()
+        inference_time = end_time - start_time
+        
+        if isinstance(result, tuple):
+            mse, pred_actions, gt_actions, prediction_points = result
+        else:
+            mse = result
+            pred_actions = gt_actions = prediction_points = None
+        
+        print(f"MSE: {mse}, Time taken: {inference_time:.2f} seconds")
         all_mse.append(mse)
+        
+        # Save trajectory data if path is provided and data is available
+        if save_data_path is not None and pred_actions is not None:
+            metrics = {
+                "mse": mse,
+                "trajectory_length": traj_length,
+                "steps_evaluated": steps_to_eval,
+                "inference_time": inference_time,
+                "action_horizon": args.action_horizon,
+                "modality_keys": args.modality_keys,
+            }
+            
+            save_trajectory_data(
+                pred_actions=pred_actions,
+                gt_actions=gt_actions,
+                prediction_points=prediction_points,
+                metrics=metrics,
+                traj_id=traj_id,
+                save_path=save_data_path,
+                inference_times=[inference_time],
+            )
+            
+            all_trajectory_data.append({
+                "trajectory_id": traj_id,
+                "mse": mse,
+                "inference_time": inference_time,
+                "steps_evaluated": steps_to_eval,
+                "trajectory_length": traj_length,
+            })
+    
+    # Save summary data
+    if save_data_path is not None:
+        summary_data = {
+            "evaluation_summary": {
+                "total_trajectories": num_trajs,
+                "average_mse": np.mean(all_mse),
+                "mse_std": np.std(all_mse),
+                "total_evaluation_time": sum([t["inference_time"] for t in all_trajectory_data]),
+                "configuration": {
+                    "data_config": args.data_config,
+                    "action_horizon": args.action_horizon,
+                    "modality_keys": args.modality_keys,
+                    "embodiment_tag": args.embodiment_tag,
+                    "denoising_steps": args.denoising_steps,
+                }
+            },
+            "trajectory_summaries": all_trajectory_data,
+        }
+        
+        summary_path = save_data_path / "evaluation_summary.json"
+        with open(summary_path, "w") as f:
+            json.dump(summary_data, f, indent=2)
+        print(f"Saved evaluation summary to: {summary_path}")
     
     print("Average MSE across all trajs:", np.mean(all_mse))
     print("Done")

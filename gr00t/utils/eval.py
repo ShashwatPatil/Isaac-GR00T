@@ -43,10 +43,12 @@ def calc_mse_for_single_trajectory(
     action_horizon=16,
     plot=False,
     save_plot_path=None,
+    return_data=False,
 ):
     state_joints_across_time = []
     gt_action_across_time = []
     pred_action_across_time = []
+    prediction_points = []  # Store (step, action_chunk) pairs for each inference point
 
     for step_count in range(steps):
         data_point = dataset.get_step_data(traj_id, step_count)
@@ -69,6 +71,15 @@ def calc_mse_for_single_trajectory(
         if step_count % action_horizon == 0:
             print("inferencing at step: ", step_count)
             action_chunk = policy.get_action(data_point)
+            
+            # Store the full action chunk for this prediction point
+            if return_data:
+                # Extract the action chunk data for this prediction point
+                chunk_data = {}
+                for key in modality_keys:
+                    chunk_data[key] = action_chunk[f"action.{key}"]
+                prediction_points.append((step_count, chunk_data))
+            
             for j in range(action_horizon):
                 # NOTE: concat_pred_action = action[f"action.{modality_keys[0]}"][j]
                 # the np.atleast_1d is to ensure the action is a 1D array, handle where single value is returned
@@ -113,7 +124,10 @@ def calc_mse_for_single_trajectory(
         }
         plot_trajectory(info, save_plot_path)
 
-    return mse
+    if return_data:
+        return mse, pred_action_across_time, gt_action_across_time, prediction_points
+    else:
+        return mse
 
 
 def plot_trajectory(
