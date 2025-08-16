@@ -335,12 +335,12 @@ def main(args: ArgsConfig):
         # Save trajectory data if path is provided and data is available
         if save_data_path is not None and pred_actions is not None:
             metrics = {
-                "mse": mse,
-                "trajectory_length": traj_length,
-                "steps_evaluated": steps_to_eval,
-                "inference_time": inference_time,
-                "action_horizon": args.action_horizon,
-                "modality_keys": args.modality_keys,
+                "mse": float(mse),
+                "trajectory_length": int(traj_length),
+                "steps_evaluated": int(steps_to_eval),
+                "inference_time": float(inference_time),
+                "action_horizon": int(args.action_horizon),
+                "modality_keys": list(args.modality_keys),  # Ensure it's a list of strings
             }
             
             save_trajectory_data(
@@ -350,17 +350,17 @@ def main(args: ArgsConfig):
                 metrics=metrics,
                 traj_id=traj_id,
                 save_path=save_data_path,
-                inference_times=[inference_time],
+                inference_times=[float(inference_time)],
             )
             
             all_trajectory_data.append({
-                "trajectory_id": traj_id,
-                "mse": mse,
-                "inference_time": inference_time,
-                "steps_evaluated": steps_to_eval,
-                "trajectory_length": traj_length,
+                "trajectory_id": int(traj_id),
+                "mse": float(mse),
+                "inference_time": float(inference_time),
+                "steps_evaluated": int(steps_to_eval),
+                "trajectory_length": int(traj_length),
             })
-    
+
     # Save summary data
     if save_data_path is not None:
         # Helper function to convert numpy types to JSON serializable types
