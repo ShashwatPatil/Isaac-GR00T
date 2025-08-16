@@ -118,6 +118,28 @@ def save_trajectory_data(
         else:
             metrics_json_safe[key] = value
 
+    # Helper function to convert numpy types to JSON serializable types
+    def convert_to_json_serializable(obj):
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        elif isinstance(obj, (np.integer, np.floating, np.bool_)):
+            return obj.item()
+        elif isinstance(obj, dict):
+            return {key: convert_to_json_serializable(val) for key, val in obj.items()}
+        elif isinstance(obj, (list, tuple)):
+            return [convert_to_json_serializable(item) for item in obj]
+        else:
+            return obj
+
+    # Convert prediction_points to JSON serializable format
+    prediction_points_json = []
+    for step, horizon in prediction_points:
+        prediction_point = {
+            "step": int(step),
+            "horizon_prediction": convert_to_json_serializable(horizon)
+        }
+        prediction_points_json.append(prediction_point)
+
     # Prepare data for export
     trajectory_data = {
         "trajectory_id": traj_id,
@@ -132,10 +154,7 @@ def save_trajectory_data(
             "predicted_actions": pred_actions.tolist(),
             "ground_truth_actions": gt_actions.tolist(),
         },
-        "prediction_points": [
-            {"step": int(step), "horizon_prediction": horizon.tolist() if hasattr(horizon, "tolist") else horizon}
-            for step, horizon in prediction_points
-        ],
+        "prediction_points": prediction_points_json,
         "timing": inference_times if inference_times else [],
         "detailed_inference_data": detailed_inference_data if detailed_inference_data else [],
     }
@@ -166,7 +185,7 @@ def save_trajectory_data(
         npz_path,
         predicted_actions=pred_actions,
         ground_truth_actions=gt_actions,
-        **{f"horizon_{i}": horizon for i, (step, horizon) in enumerate(prediction_points)},
+        **{f"horizon_{i}": convert_to_json_serializable(horizon) for i, (step, horizon) in enumerate(prediction_points)},
     )
 
     print(f"  Saved trajectory data to: {traj_dir}")
