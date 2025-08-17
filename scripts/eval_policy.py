@@ -363,7 +363,7 @@ def main(args: ArgsConfig):
         # Save trajectory data if path is provided and data is available
         if save_data_path is not None and pred_actions is not None:
             metrics = {
-                "mse": float(mse),
+                "overall_mse": float(mse),
                 "trajectory_length": int(traj_length),
                 "steps_evaluated": int(steps_to_eval),
                 "total_wall_clock_time": float(total_inference_time),
