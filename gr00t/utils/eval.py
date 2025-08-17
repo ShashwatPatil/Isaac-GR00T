@@ -12,6 +12,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import time  # Add this import
+
 import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
@@ -49,17 +51,21 @@ def calc_mse_for_single_trajectory(
     gt_action_across_time = []
     pred_action_across_time = []
     prediction_points = []  # Store (step, action_chunk) pairs for each inference point
+    
+    # Detailed timing collection
+    detailed_inference_data = []
+    inference_times_ms = []
+    inference_id = 1
 
     for step_count in range(steps):
         data_point = dataset.get_step_data(traj_id, step_count)
 
         # NOTE this is to get all modality keys concatenated
-        # concat_state = data_point[f"state.{modality_keys[0]}"][0]
-        # # concat_gt_action = data_point[f"action.{modality_keys[0]}"][0]
         concat_gt_action = np.concatenate(
             [data_point[f"action.{key}"][0] for key in modality_keys], axis=0
         )
         gt_action_across_time.append(concat_gt_action)
+        
         try:
             concat_state = np.concatenate(
                 [data_point[f"state.{key}"][0] for key in modality_keys], axis=0
@@ -70,19 +76,62 @@ def calc_mse_for_single_trajectory(
 
         if step_count % action_horizon == 0:
             print("inferencing at step: ", step_count)
+            
+            # Start timing individual inference
+            inference_start = time.perf_counter()
             action_chunk = policy.get_action(data_point)
+            inference_end = time.perf_counter()
+            
+            # Calculate inference time in milliseconds
+            inference_time_ms = (inference_end - inference_start) * 1000
+            inference_times_ms.append(inference_time_ms)
+            
+            # Collect detailed inference data
+            if return_data:
+                # Extract input state for logging
+                try:
+                    input_state = np.concatenate(
+                        [data_point[f"state.{key}"][0] for key in modality_keys], axis=0
+                    ).tolist()
+                except:
+                    input_state = []
+                
+                # Extract language prompt if available
+                prompt = ""
+                try:
+                    if "annotation.human.task_description" in data_point:
+                        prompt = data_point["annotation.human.task_description"]
+                    elif "annotation.language.action_text" in data_point:
+                        prompt = data_point["annotation.language.action_text"]
+                except:
+                    pass
+                
+                # Extract raw actions for all modalities
+                raw_actions = []
+                for key in modality_keys:
+                    if f"action.{key}" in action_chunk:
+                        raw_actions.extend(action_chunk[f"action.{key}"].tolist())
+                
+                detailed_inference_entry = {
+                    "step": step_count,
+                    "inference_id": inference_id,
+                    "inference_time_ms": inference_time_ms,
+                    "input_state": input_state,
+                    "prompt": prompt,
+                    "raw_actions_shape": f"({action_chunk[f'action.{modality_keys[0]}'].shape[0]}, {len(raw_actions[0]) if raw_actions else 0})",
+                    "raw_actions": raw_actions[:10] if raw_actions else [],  # Store first 10 for brevity
+                }
+                detailed_inference_data.append(detailed_inference_entry)
+                inference_id += 1
             
             # Store the full action chunk for this prediction point
             if return_data:
-                # Extract the action chunk data for this prediction point
                 chunk_data = {}
                 for key in modality_keys:
                     chunk_data[key] = action_chunk[f"action.{key}"]
                 prediction_points.append((step_count, chunk_data))
             
             for j in range(action_horizon):
-                # NOTE: concat_pred_action = action[f"action.{modality_keys[0]}"][j]
-                # the np.atleast_1d is to ensure the action is a 1D array, handle where single value is returned
                 concat_pred_action = np.concatenate(
                     [np.atleast_1d(action_chunk[f"action.{key}"][j]) for key in modality_keys],
                     axis=0,
@@ -125,7 +174,10 @@ def calc_mse_for_single_trajectory(
         plot_trajectory(info, save_plot_path)
 
     if return_data:
-        return mse, pred_action_across_time, gt_action_across_time, prediction_points
+        return mse, pred_action_across_time, gt_action_across_time, prediction_points, {
+            "inference_times_ms": inference_times_ms,
+            "detailed_inference_data": detailed_inference_data,
+        }
     else:
         return mse
 

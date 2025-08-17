@@ -306,7 +306,7 @@ def main(args: ArgsConfig):
             traj_save_path = None
         
         import time
-        start_time = time.time()
+        start_time = time.perf_counter()
         
         # Call the modified calc_mse_for_single_trajectory that returns additional data
         result = calc_mse_for_single_trajectory_with_data(
@@ -320,16 +320,44 @@ def main(args: ArgsConfig):
             save_plot_path=traj_save_path,
         )
         
-        end_time = time.time()
-        inference_time = end_time - start_time
+        end_time = time.perf_counter()
+        total_inference_time = end_time - start_time
         
-        if isinstance(result, tuple):
-            mse, pred_actions, gt_actions, prediction_points = result
+        if isinstance(result, tuple) and len(result) == 5:
+            mse, pred_actions, gt_actions, prediction_points, timing_data = result
+            inference_times_ms = timing_data.get("inference_times_ms", [])
+            detailed_inference_data = timing_data.get("detailed_inference_data", [])
         else:
-            mse = result
-            pred_actions = gt_actions = prediction_points = None
+            mse, pred_actions, gt_actions, prediction_points = result
+            inference_times_ms = []
+            detailed_inference_data = []
         
-        print(f"MSE: {mse}, Time taken: {inference_time:.2f} seconds")
+        # Calculate detailed timing metrics
+        if inference_times_ms:
+            mean_inference_time_ms = np.mean(inference_times_ms)
+            total_inference_time_ms = np.sum(inference_times_ms)
+            inference_frequency_hz = 1000.0 / mean_inference_time_ms if mean_inference_time_ms > 0 else 0
+            action_frequency_hz = inference_frequency_hz * args.action_horizon
+            steps_per_inference = args.action_horizon
+            trajectory_duration_s = steps_to_eval / 30.0  # Assuming 30 Hz dataset
+            real_time_factor = trajectory_duration_s / (total_inference_time_ms / 1000.0) if total_inference_time_ms > 0 else 0
+            total_compute_time_s = total_inference_time_ms / 1000.0
+        else:
+            mean_inference_time_ms = 0
+            total_inference_time_ms = 0
+            inference_frequency_hz = 0
+            action_frequency_hz = 0
+            steps_per_inference = args.action_horizon
+            trajectory_duration_s = 0
+            real_time_factor = 0
+            total_compute_time_s = total_inference_time
+        
+        print(f"MSE: {mse:.6f}")
+        print(f"Total time: {total_inference_time:.2f}s")
+        print(f"Mean inference time: {mean_inference_time_ms:.2f}ms")
+        print(f"Inference frequency: {inference_frequency_hz:.2f}Hz")
+        print(f"Real-time factor: {real_time_factor:.2f}x")
+        
         all_mse.append(mse)
         
         # Save trajectory data if path is provided and data is available
@@ -338,9 +366,18 @@ def main(args: ArgsConfig):
                 "mse": float(mse),
                 "trajectory_length": int(traj_length),
                 "steps_evaluated": int(steps_to_eval),
-                "inference_time": float(inference_time),
+                "total_wall_clock_time": float(total_inference_time),
                 "action_horizon": int(args.action_horizon),
-                "modality_keys": list(args.modality_keys),  # Ensure it's a list of strings
+                "modality_keys": list(args.modality_keys),
+                # Detailed timing metrics
+                "mean_inference_time_ms": float(mean_inference_time_ms),
+                "total_inference_time_ms": float(total_inference_time_ms),
+                "inference_frequency_hz": float(inference_frequency_hz),
+                "action_frequency_hz": float(action_frequency_hz),
+                "steps_per_inference": float(steps_per_inference),
+                "real_time_factor": float(real_time_factor),
+                "trajectory_duration_s": float(trajectory_duration_s),
+                "total_compute_time_s": float(total_compute_time_s),
             }
             
             save_trajectory_data(
@@ -350,16 +387,9 @@ def main(args: ArgsConfig):
                 metrics=metrics,
                 traj_id=traj_id,
                 save_path=save_data_path,
-                inference_times=[float(inference_time)],
+                inference_times=inference_times_ms,
+                detailed_inference_data=detailed_inference_data,
             )
-            
-            all_trajectory_data.append({
-                "trajectory_id": int(traj_id),
-                "mse": float(mse),
-                "inference_time": float(inference_time),
-                "steps_evaluated": int(steps_to_eval),
-                "trajectory_length": int(traj_length),
-            })
 
     # Save summary data
     if save_data_path is not None:
